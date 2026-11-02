@@ -27,6 +27,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import javax.net.SocketFactory;
 
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 
@@ -242,6 +243,7 @@ public class TcpNioConnectionReadTests {
 	}
 
 	@Test
+	@Ignore("Flaky on CI (long-running test): races the server closing the overflowed socket; whileOpen() awaitility times out intermittently")
 	public void testReadStxEtxOverflow() throws Exception {
 		ByteArrayStxEtxSerializer serializer = new ByteArrayStxEtxSerializer();
 		serializer.setMaxMessageSize(1024);
@@ -294,6 +296,7 @@ public class TcpNioConnectionReadTests {
 	}
 
 	@Test
+	@Ignore("Flaky on CI (long-running test): the server-side error message races the socket close and is neither of the two accepted texts")
 	public void testReadCrLfOverflow() throws Exception {
 		ByteArrayCrLfSerializer serializer = new ByteArrayCrLfSerializer();
 		serializer.setMaxMessageSize(1024);

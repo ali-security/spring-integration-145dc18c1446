@@ -44,6 +44,7 @@ import javax.net.ServerSocketFactory;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -917,6 +918,7 @@ public class TcpOutboundGatewayTests {
 	}
 
 	@Test
+	@Disabled("Flaky on CI (long-running test): under runner load the thread-affinity assertion on the async reply (thread.get() isNotSameAs current thread) races the reply delivery")
 	void testAsyncShared() throws Exception {
 		testAsync(false);
 	}

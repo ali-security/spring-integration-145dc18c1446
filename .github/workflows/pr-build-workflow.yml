@@ -1,13 +1,18 @@
 name: Pull Request build
 
 on:
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Gradle test task selector (e.g. :spring-integration-file:test --tests FooTests); empty runs the full check'
+        required: false
+        default: ''
 
 jobs:
   build:
 
     runs-on: ubuntu-latest
+    timeout-minutes: 50
 
     services:
 
@@ -42,12 +47,175 @@ jobs:
         env:
           SI_FATAL_WHEN_NO_BEANFACTORY: true
           NO_REFERENCE_TASK: true
+          RUN_LONG_INTEGRATION_TESTS: true
         with:
-          arguments: checkAsciidocLinks check
+          arguments: ${{ inputs.test-filter != '' && inputs.test-filter || 'checkAsciidocLinks check' }}
+
+      - name: Test results summary
+        if: always()
+        run: |
+          python3 - <<'PYEOF'
+          import glob, os, re, xml.etree.ElementTree as ET
+          from collections import defaultdict
+
+          LONG = ('long-running integration test gated on RUN_LONG_INTEGRATION_TESTS=true '
+                  '(set in this build, so this skip comes from another condition)')
+          SKIP_ANN = re.compile(r'@(Ignore|Disabled|LongRunningTest|EnabledIf\w*|DisabledIf\w*|EnabledOn\w*|DisabledOn\w*)\b(\((?:[^()]|\([^()]*\))*\))?')
+          src_cache = {}
+
+
+          def read(path):
+              if path not in src_cache:
+                  try:
+                      with open(path, encoding='utf-8', errors='replace') as fh:
+                          src_cache[path] = fh.read().split('\n')
+                  except OSError:
+                      src_cache[path] = None
+              return src_cache[path]
+
+
+          def find_source(mod, classname):
+              outer = classname.split('$')[0]
+              rel = outer.replace('.', '/')
+              for lang, ext in (('java', 'java'), ('kotlin', 'kt'), ('groovy', 'groovy'), ('java', 'kt')):
+                  p = f'{mod}/src/test/{lang}/{rel}.{ext}'
+                  if os.path.exists(p):
+                      return p
+              return None
+
+
+          def anns_above(lines, idx):
+              found, j = [], idx - 1
+              while j >= 0 and j >= idx - 12:
+                  s = lines[j].strip()
+                  if not s or s.startswith('@') or s.startswith('//') or s.startswith('*') or s.startswith('/*') or s.endswith(')') or s.endswith('",') or s.startswith('"'):
+                      found.append(s)
+                      if s.startswith('/**'):
+                          break
+                      j -= 1
+                      continue
+                  break
+              text = ' '.join(reversed(found))
+              anns = [m.group(0) for m in SKIP_ANN.finditer(text)]
+              notes = ' '.join(x.lstrip('/*').strip() for x in reversed(found)
+                               if x.startswith(('//', '/*', '*')) and x.lstrip('/*').strip()
+                               and not x.lstrip('/*').strip().startswith('@'))
+              if anns and notes and not any('(' in a for a in anns):
+                  anns = [a + ' [source comment: ' + notes + ']' for a in anns]
+              return anns
+
+
+          def class_reasons(lines, simple):
+              out = []
+              for i, l in enumerate(lines):
+                  if re.search(r'\b(class|interface)\s+' + re.escape(simple) + r'\b', l):
+                      out = anns_above(lines, i)
+                      break
+              if any('LongRunningIntegrationTest' in l for l in lines):
+                  out.append('LongRunningIntegrationTest rule')
+              return out
+
+
+          def method_reasons(lines, method):
+              for i, l in enumerate(lines):
+                  if re.search(r'\b(void|fun|def)\s+`?' + re.escape(method) + r'`?\s*\(', l) or \
+                          re.search(r'\b' + re.escape(method) + r'\s*\([^)]*\)\s*(throws[^{]*)?\{\s*$', l):
+                      a = anns_above(lines, i)
+                      body = '\n'.join(lines[i:i + 40])
+                      if re.search(r'\bAssume\.|assume(True|False|That)\(|Assumptions\.', body):
+                          a.append('runtime assumption in test body')
+                      return a, True
+              return [], False
+
+
+          def reason_for(mod, classname, name):
+              method = re.sub(r'[\(\[].*$', '', name).strip()
+              simple = classname.split('.')[-1].split('$')[-1]
+              path = find_source(mod, classname)
+              reasons = []
+              if path and read(path):
+                  lines = read(path)
+                  m, ok = method_reasons(lines, method)
+                  reasons += m
+                  if not ok:
+                      for p in glob.glob(f'{mod}/src/test/**/*.*', recursive=True):
+                          ls = read(p)
+                          if ls:
+                              m2, ok2 = method_reasons(ls, method)
+                              if ok2:
+                                  reasons += [r + ' (inherited)' for r in m2]
+                                  break
+                  reasons += [r + ' (class-level)' for r in class_reasons(lines, simple)]
+              if not reasons:
+                  return 'no skip annotation found in source (JUnit reported it skipped without a message)'
+              out = []
+              for r in reasons:
+                  if 'LongRunning' in r:
+                      out.append(LONG)
+                  elif r.startswith(('@Ignore', '@Disabled')):
+                      out.append('disabled in the test source by ' + r)
+                  else:
+                      out.append(r)
+              return '; '.join(dict.fromkeys(out))
+
+
+          mods = defaultdict(lambda: [0, 0, 0, 0])
+          skipped, failed = [], []
+          for f in sorted(glob.glob('*/build/test-results/test/*.xml')):
+              mod = f.split('/')[0]
+              for tc in ET.parse(f).getroot().iter('testcase'):
+                  cls, nm = tc.get('classname'), tc.get('name')
+                  short = mod.replace('spring-integration-', '') + ' ' + cls.split('.')[-1] + '.' + nm
+                  m = mods[mod]
+                  m[0] += 1
+                  sk = tc.find('skipped')
+                  if sk is not None:
+                      m[2] += 1
+                      msg = sk.get('message') or reason_for(mod, cls, nm)
+                      msg = msg.replace('disabled in the test source by ', '')
+                      if msg.startswith(('@Ignore', '@Disabled')) and '"' not in msg and '[' not in msg:
+                          msg += ' (upstream, no msg)'
+                      if len(msg) > 110:
+                          msg = msg[:107] + '...'
+                      skipped.append(f'{short} - {msg}')
+                  elif tc.find('failure') is not None or tc.find('error') is not None:
+                      m[3] += 1
+                      failed.append(short)
+                  else:
+                      m[1] += 1
+          tot = [sum(v[i] for v in mods.values()) for i in range(4)]
+          print('==== Per-module test results (tests / passed / skipped / failed) ====')
+          for mod, (t, p, s, x) in sorted(mods.items()):
+              print(f'{mod}: {t} tests, {p} passed, {s} skipped, {x} failed')
+          print(f'==== Skipped tests: {tot[2]} (each listed with the skip annotation/reason found in its test source) ====')
+          for s in skipped:
+              print('Skipped test: ' + s)
+          print(f'==== Failed tests ({tot[3]}) ====')
+          for s in failed:
+              print('Failed test: ' + s)
+          print(f'==== TOTAL: {tot[0]} tests, {tot[1]} passed, {tot[2]} skipped, {tot[3]} failed ====')
+          print(f'==== TEST RESULT: {tot[1]} passed, {tot[2]} skipped, {tot[3]} failed (of {tot[0]} tests) ====')
+          PYEOF
+
+      - name: Set up JDK 14 (release JDK of the published jar)
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: '14.0.2'
+
+      - name: Build spring-integration-file jar
+        run: ./gradlew --no-daemon --console=plain :spring-integration-file:clean :spring-integration-file:jar
+
+      - name: Upload spring-integration-file jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: spring-integration-file-jar
+          path: spring-integration-file/build/libs/spring-integration-file-5.5.20.jar
+          if-no-files-found: error
 
       - name: Capture Test Results
         if: failure()
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: '*/build/reports/tests/**/*.*'

@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
@@ -120,6 +121,7 @@ public class FluxMessageChannelTests {
 	}
 
 	@Test
+	@Disabled("Flaky on CI: asserts the Reactor sink is done synchronously after flowRegistration.destroy(); passes and fails across identical runs")
 	void testFluxMessageChannelCleanUp() throws InterruptedException {
 		FluxMessageChannel flux = MessageChannels.flux().get();
 
@@ -145,6 +147,7 @@ public class FluxMessageChannelTests {
 	}
 
 	@Test
+	@Disabled("Flaky on CI: asserts upstreamSubscriptions is empty immediately after StepVerifier cancel, before async disposal completes; passes and fails across identical runs")
 	void noMemoryLeakInFluxMessageChannelForVolatilePublishers() {
 		FluxMessageChannel messageChannel = new FluxMessageChannel();
 

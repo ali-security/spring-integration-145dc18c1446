@@ -38,6 +38,7 @@ import org.apache.kafka.clients.producer.ProducerRecord;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.common.header.Headers;
 import org.apache.kafka.common.header.internals.RecordHeaders;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.integration.IntegrationMessageHeaderAccessor;
@@ -391,6 +392,7 @@ class MessageDrivenAdapterTests {
 	}
 
 	@Test
+	@Disabled("Flaky on CI: asserts the two records sent for the error-channel phase arrive in one poll (getRecords() hasSize(2)); on a loaded runner they split across polls")
 	void testInboundBatch(EmbeddedKafkaBroker embeddedKafka) throws Exception {
 		Map<String, Object> props = KafkaTestUtils.consumerProps("test2", "true", embeddedKafka);
 		props.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");

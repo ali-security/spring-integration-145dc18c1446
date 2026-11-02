@@ -21,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.After;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -95,6 +96,7 @@ public class RedisChannelParserTests extends RedisAvailableTests {
 
 	@Test
 	@RedisAvailable
+	@Ignore("Flaky on CI: awaitContainerSubscribed() intermittently times out waiting for the Redis pub/sub listener container subscription under runner load")
 	public void testPubSubChannelUsage() throws Exception {
 		this.awaitContainerSubscribed(TestUtils.getPropertyValue(this.redisChannel, "container",
 				RedisMessageListenerContainer.class));

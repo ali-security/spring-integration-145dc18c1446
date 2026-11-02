@@ -11,6 +11,11 @@ buildscript {
 		classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion"
 		classpath "org.jetbrains.kotlin:kotlin-allopen:$kotlinVersion"
 	}
+	configurations.classpath {
+		resolutionStrategy.dependencySubstitution {
+			substitute module('com.burgstaller:okhttp-digest') using module('io.github.rburgst:okhttp-digest:1.21')
+		}
+	}
 }
 
 plugins {
@@ -374,7 +379,7 @@ configure(javaProjects) { subproject ->
 		from("${rootProject.projectDir}/src/dist") {
 			include 'notice.txt'
 			into 'META-INF'
-			expand(copyright: new Date().format('yyyy'), version: project.version)
+			expand(copyright: '2023', version: project.version)
 		}
 		from("${rootProject.projectDir}") {
 			include 'LICENSE.txt'
